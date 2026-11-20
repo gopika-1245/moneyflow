@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { QuickAddModal } from "@/components/layout/quick-add-modal";
+import { TransactionItem } from "@/types/finance";
 
 export default function TransactionsPage() {
   const [transactions, setTransactions] = React.useState<any[]>([]);
@@ -74,13 +75,19 @@ export default function TransactionsPage() {
       .catch(() => {});
   }, []);
 
+  const paginationRef = React.useRef(pagination);
+  React.useEffect(() => {
+    paginationRef.current = pagination;
+  }, [pagination]);
+
   const loadTransactions = React.useCallback(
-    async (pageToLoad = pagination.page) => {
+    async (pageToLoad?: number) => {
       setLoading(true);
+      const targetPage = pageToLoad ?? paginationRef.current.page;
       try {
         const params = new URLSearchParams({
-          page: String(pageToLoad),
-          limit: String(pagination.limit),
+          page: String(targetPage),
+          limit: String(paginationRef.current.limit),
         });
         if (search) params.set("search", search);
         if (type) params.set("type", type);
@@ -103,12 +110,12 @@ export default function TransactionsPage() {
         setLoading(false);
       }
     },
-    [pagination.page, pagination.limit, search, type, categoryId, accountId, startDate, endDate]
+    [search, type, categoryId, accountId, startDate, endDate]
   );
 
   React.useEffect(() => {
     loadTransactions(1);
-  }, [search, type, categoryId, accountId, startDate, endDate]);
+  }, [loadTransactions]);
 
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this transaction? Account balances will be safely restored.")) {
@@ -125,7 +132,7 @@ export default function TransactionsPage() {
     }
   };
 
-  const openEditModal = (tx: any) => {
+  const openEditModal = (tx: TransactionItem) => {
     setEditItem(tx);
     setEditTitle(tx.title);
     setEditAmount(String(tx.amount));

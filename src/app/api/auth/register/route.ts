@@ -15,10 +15,17 @@ export async function POST(request: NextRequest) {
     const { fullName, email, password } = validated.data;
     const supabase = createServerSupabaseClient();
 
+    const origin =
+      request.headers.get("origin") ||
+      process.env.NEXT_PUBLIC_APP_URL ||
+      "https://moneyflow-fdzb.vercel.app";
+    const emailRedirectTo = `${origin}/auth/callback`;
+
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
+        emailRedirectTo,
         data: {
           full_name: fullName,
         },
@@ -26,14 +33,28 @@ export async function POST(request: NextRequest) {
     });
 
     if (error) {
-      return errorResponse(error.message, 400);
+      let message = error.message;
+      if (
+        error.message.toLowerCase().includes("already registered") ||
+        error.message.toLowerCase().includes("already in use") ||
+        error.message.toLowerCase().includes("user already exists")
+      ) {
+        message = "An account with this email address already exists. Please log in instead.";
+      }
+      return errorResponse(message, 400);
     }
+
+    // Determine if confirmation email was sent or session was auto-confirmed
+    const requiresEmailConfirmation = Boolean(data.user && !data.session);
 
     return successResponse(
       {
         user: data.user,
         session: data.session,
-        message: "Registration successful",
+        requiresEmailConfirmation,
+        message: requiresEmailConfirmation
+          ? "Account created. Please verify your email before logging in."
+          : "Registration successful",
       },
       201
     );

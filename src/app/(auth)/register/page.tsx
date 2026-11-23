@@ -7,7 +7,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 import { Input } from "@/ui/input";
 import { Button } from "@/ui/button";
 import { toast } from "sonner";
-import { UserPlus, ArrowRight, ShieldCheck } from "lucide-react";
+import { UserPlus, ArrowRight, ShieldCheck, Mail, RefreshCw, LogIn } from "lucide-react";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -17,8 +17,16 @@ export default function RegisterPage() {
   const [password, setPassword] = React.useState("");
   const [confirmPassword, setConfirmPassword] = React.useState("");
   const [loading, setLoading] = React.useState(false);
+  const [resending, setResending] = React.useState(false);
+  const [resendCooldown, setResendCooldown] = React.useState(0);
   const [error, setError] = React.useState("");
-  const [registered, setRegistered] = React.useState(false);
+  const [registeredEmail, setRegisteredEmail] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setTimeout(() => setResendCooldown((prev) => prev - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [resendCooldown]);
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,8 +51,8 @@ export default function RegisterPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          fullName,
-          email,
+          fullName: fullName.trim(),
+          email: email.trim(),
           password,
           confirmPassword,
         }),
@@ -56,8 +64,17 @@ export default function RegisterPage() {
         throw new Error(json.error || "Registration failed");
       }
 
-      toast.success("Account created successfully!");
-      setRegistered(true);
+      // If Supabase has email confirmation disabled, user gets instant session
+      if (json.data?.session && !json.data?.requiresEmailConfirmation) {
+        toast.success("Account created successfully! Welcome to MoneyFlow.");
+        router.push("/dashboard");
+        router.refresh();
+        return;
+      }
+
+      // If email confirmation is enabled (default on Supabase projects)
+      toast.success("Account created! Please check your email to verify your account.");
+      setRegisteredEmail(email.trim());
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Registration error";
       setError(msg);
@@ -67,19 +84,75 @@ export default function RegisterPage() {
     }
   };
 
-  if (registered) {
+  const handleResendConfirmation = async () => {
+    if (!registeredEmail) return;
+    setResending(true);
+    try {
+      const res = await fetch("/api/auth/resend-confirmation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: registeredEmail }),
+      });
+      const json = await res.json();
+
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Failed to resend confirmation email.");
+      }
+
+      toast.success("A new verification link has been sent to your email!");
+      setResendCooldown(60);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Error resending confirmation";
+      toast.error(msg);
+    } finally {
+      setResending(false);
+    }
+  };
+
+  if (registeredEmail) {
     return (
-      <Card className="w-full max-w-md shadow-xl border-border text-center p-6">
-        <div className="mx-auto w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center mb-3">
-          <ShieldCheck className="w-6 h-6" />
+      <Card className="w-full max-w-md shadow-xl border-border text-center p-6 space-y-4">
+        <div className="mx-auto w-14 h-14 rounded-2xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center mb-1">
+          <Mail className="w-7 h-7" />
         </div>
-        <CardTitle className="text-xl font-bold">Account Created</CardTitle>
-        <CardDescription className="mt-2 text-sm">
-          Welcome to MoneyFlow! If email confirmation is enabled on your Supabase project, please check your inbox to verify your email. Otherwise, you can log in right away.
+        <CardTitle className="text-2xl font-bold tracking-tight">Verify Your Email</CardTitle>
+        <CardDescription className="text-sm leading-relaxed text-muted-foreground">
+          We&apos;ve sent a verification link to <strong className="text-foreground">{registeredEmail}</strong>.
+          Please check your inbox (and spam folder) and click the confirmation link to activate your MoneyFlow account.
         </CardDescription>
-        <div className="mt-6">
-          <Button onClick={() => router.push("/login")} className="w-full">
-            Proceed to Login
+
+        <div className="p-4 rounded-xl bg-muted/60 border border-border text-left text-xs space-y-2">
+          <div className="flex items-center gap-2 font-semibold text-foreground">
+            <ShieldCheck className="w-4 h-4 text-emerald-600" />
+            Why is verification required?
+          </div>
+          <p className="text-muted-foreground leading-relaxed">
+            To protect your financial records and ensure that only you can access your accounts and balance history.
+          </p>
+        </div>
+
+        <div className="pt-2 space-y-2.5">
+          <Button
+            variant="outline"
+            onClick={handleResendConfirmation}
+            disabled={resending || resendCooldown > 0}
+            className="w-full font-medium"
+          >
+            {resending ? (
+              <>
+                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                Resending Email...
+              </>
+            ) : resendCooldown > 0 ? (
+              `Resend available in ${resendCooldown}s`
+            ) : (
+              "Resend Verification Email"
+            )}
+          </Button>
+
+          <Button onClick={() => router.push("/login")} className="w-full font-semibold">
+            <LogIn className="w-4 h-4 mr-2" />
+            Proceed to Sign In
           </Button>
         </div>
       </Card>

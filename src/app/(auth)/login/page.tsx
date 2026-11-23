@@ -8,47 +8,112 @@ import { Input } from "@/ui/input";
 import { Button } from "@/ui/button";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
-import { LogIn, ArrowRight, ShieldCheck } from "lucide-react";
+import { LogIn, ArrowRight, ShieldCheck, Mail, AlertCircle, RefreshCw } from "lucide-react";
 
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectPath = searchParams.get("redirect") || "/dashboard";
+  const urlError = searchParams.get("error");
+  const urlVerified = searchParams.get("verified");
 
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [loading, setLoading] = React.useState(false);
+  const [resending, setResending] = React.useState(false);
+  const [resendCooldown, setResendCooldown] = React.useState(0);
   const [error, setError] = React.useState("");
+  const [isEmailUnconfirmed, setIsEmailUnconfirmed] = React.useState(false);
+
+  React.useEffect(() => {
+    if (urlError) {
+      setError(decodeURIComponent(urlError));
+    }
+    if (urlVerified) {
+      toast.success("Email verified successfully! You can now sign in.");
+    }
+  }, [urlError, urlVerified]);
+
+  React.useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setTimeout(() => setResendCooldown((prev) => prev - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [resendCooldown]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setIsEmailUnconfirmed(false);
     setLoading(true);
 
     try {
       const supabase = createClient();
       const { data, error: authError } = await supabase.auth.signInWithPassword({
-        email,
+        email: email.trim(),
         password,
       });
 
       if (authError) {
-        setError(authError.message);
-        toast.error(authError.message);
+        const rawMsg = authError.message.toLowerCase();
+
+        if (rawMsg.includes("email not confirmed")) {
+          setIsEmailUnconfirmed(true);
+          setError("Your email address has not been confirmed yet.");
+          return;
+        }
+
+        if (rawMsg.includes("invalid login credentials") || rawMsg.includes("invalid_credentials")) {
+          setError("Invalid email or password. Please try again.");
+          return;
+        }
+
+        if (rawMsg.includes("network") || rawMsg.includes("fetch")) {
+          setError("Connection error. Please check your network and try again.");
+          return;
+        }
+
+        setError("Unable to sign in. Please verify your credentials and try again.");
         return;
       }
 
       if (data?.user) {
-        toast.success("Welcome back!");
+        toast.success("Welcome back to MoneyFlow!");
         router.push(redirectPath);
         router.refresh();
       }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to sign in";
-      setError(msg);
-      toast.error(msg);
+    } catch {
+      setError("An unexpected error occurred. Please try again.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleResendConfirmation = async () => {
+    if (!email || !email.includes("@")) {
+      toast.error("Please enter your email address to receive a confirmation link.");
+      return;
+    }
+
+    setResending(true);
+    try {
+      const res = await fetch("/api/auth/resend-confirmation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim() }),
+      });
+      const json = await res.json();
+
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Failed to resend confirmation email.");
+      }
+
+      toast.success("Confirmation email resent! Please check your inbox and spam folder.");
+      setResendCooldown(60);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Error resending confirmation email";
+      toast.error(msg);
+    } finally {
+      setResending(false);
     }
   };
 
@@ -66,9 +131,51 @@ function LoginForm() {
 
       <form onSubmit={handleLogin}>
         <CardContent className="space-y-4">
-          {error && (
-            <div className="p-3 text-xs rounded-lg bg-red-500/10 border border-red-500/20 text-red-600">
-              {error}
+          {isEmailUnconfirmed && (
+            <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-900 dark:text-amber-200 text-xs space-y-3">
+              <div className="flex items-start gap-2.5">
+                <Mail className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+                <div className="space-y-1">
+                  <p className="font-semibold text-sm text-amber-800 dark:text-amber-300">
+                    Email Verification Required
+                  </p>
+                  <p className="leading-relaxed">
+                    A confirmation email was sent to <strong>{email}</strong> when your account was created. Please check your inbox (and spam folder) and click the confirmation link to activate your account.
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-1 border-t border-amber-500/20 flex items-center justify-between">
+                <span className="text-[11px] text-amber-700/80 dark:text-amber-300/80">
+                  Didn&apos;t receive it?
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={resending || resendCooldown > 0}
+                  onClick={handleResendConfirmation}
+                  className="h-8 text-xs font-medium border-amber-500/30 hover:bg-amber-500/15"
+                >
+                  {resending ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                      Sending...
+                    </>
+                  ) : resendCooldown > 0 ? (
+                    `Resend in ${resendCooldown}s`
+                  ) : (
+                    "Resend Email"
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {error && !isEmailUnconfirmed && (
+            <div className="p-3 text-xs rounded-lg bg-red-500/10 border border-red-500/20 text-red-600 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{error}</span>
             </div>
           )}
 
